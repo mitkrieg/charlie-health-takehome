@@ -12,6 +12,7 @@ transformer = PatientDataTransformer()
 df_clean = transformer.fit_transform(df_raw)
 """
 
+import uuid
 import warnings
 import numpy as np
 import pandas as pd
@@ -56,13 +57,13 @@ EDUCATION_MAP = {
     "M.Tech": 2,
     "MBA": 2,
     "MCA": 2,
-    "MD": 2,
     "ME": 2,
     "MHM": 2,
     "MSc": 2,
     "LLM": 2,
     # PhD
     "PhD": 3,
+    "MD": 3,
 }
 
 PROFESSION_MAP = {
@@ -368,6 +369,15 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
             df["satisfaction"] + df["sleep_duration"] + df["dietary_enc"]
         ) / 3
 
+        df["physical_score"] = ((5 - df["sleep_duration"]) + df["dietary_enc"]) / 2
+
+        df["emotional_score"] = (
+            (5 - df["satisfaction"])
+            + df["pressure"]
+            + (5 * df["suicidal_thoughts"])
+            + (4 * df["depression"])
+        ) / 4
+
         df["age_group"] = pd.cut(
             df["age"],
             bins=[0, 22, 30, 40, 50, 100],
@@ -405,7 +415,8 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
         df.drop_duplicates(inplace=True)
         n_dropped_dup = before - len(df)
 
-        df.reset_index(drop=True, inplace=True)
+        df.index = [str(uuid.uuid4()) for _ in range(len(df))]
+        df.index.name = "patient_id"
 
         self.n_dropped_na_ = n_dropped_na
         self.n_dropped_dup_ = n_dropped_dup
@@ -477,5 +488,5 @@ if __name__ == "__main__":
     print(f"\n{df_clean.describe(include='all').to_string()}")
 
     out_path = DATA_DIR / "data_clean.csv"
-    df_clean.to_csv(out_path, index=False)
+    df_clean.to_csv(out_path, index=True)
     print(f"\nSaved → {out_path}")

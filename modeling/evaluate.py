@@ -12,13 +12,6 @@ class Evaluator:
         self.model = model
         self.random_state = random_state
 
-    def _get_labels(self, X: pd.DataFrame) -> pd.Series:
-        """Reconstruct integer label array from model.clusters_ aligned to X's index."""
-        labels = pd.Series(index=X.index, dtype=float)
-        for cid, members in self.model.clusters_.items():
-            labels.loc[members.index.intersection(X.index)] = cid
-        return labels.dropna().astype(int)
-
     def wcss(self, X: pd.DataFrame) -> tuple[float, dict]:
         """Within cluster sum of squares"""
         feature_cols = X.select_dtypes(include="number").columns
@@ -34,9 +27,27 @@ class Evaluator:
 
     def silhouette(self, X: pd.DataFrame, metric: str = "euclidean") -> float:
         feature_cols = X.select_dtypes(include="number").columns
-        labels = self._get_labels(X)
-        X_aligned = X.loc[labels.index][feature_cols].fillna(0)
-        return silhouette_score(X_aligned, labels, metric=metric, random_state=self.random_state)
+        labels = self.model.labels_
+        return silhouette_score(
+            X.loc[labels.index, feature_cols].fillna(0),
+            labels,
+            metric=metric,
+            random_state=self.random_state,
+        )
+
+    def report(self, X: pd.DataFrame, metric: str = "euclidean") -> str:
+        wcss, per_cluster_wcss = self.wcss(X)
+        sil = self.silhouette(X, metric)
+        stats = self.group_size_stats()
+
+        lines = [
+            "Metrics report:",
+            f"  Groups:     {stats['n_groups']}",
+            f"  Sizes:      min={stats['min']}  max={stats['max']}  mean={stats['mean']:.1f}  std={stats['std']:.1f}  cv={stats['cv']:.3f}",
+            f"  WCSS:       total={wcss:.2f} mean={wcss / len(per_cluster_wcss): .2f}",
+            f"  Silhouette: {sil:.4f}  (metric={metric})",
+        ]
+        return "\n".join(lines)
 
     def plot_dendrogram(self, **kwargs):
         if not hasattr(self.model, "agglo_model_"):
@@ -68,7 +79,9 @@ class Evaluator:
             _, ax = plt.subplots()
         sizes = pd.Series({cid: len(m) for cid, m in self.model.clusters_.items()})
         sizes.sort_index().plot.bar(ax=ax)
-        ax.axhline(y=self.model.group_size, color="red", linestyle="--", label="max size")
+        ax.axhline(
+            y=self.model.group_size, color="red", linestyle="--", label="max size"
+        )
         ax.legend()
         return ax
 
@@ -93,21 +106,6 @@ class Evaluator:
         for cid, members in self.model.clusters_.items():
             rows[cid] = members[feature_cols].mean()
         return pd.DataFrame(rows).T.sort_index()
-
-    def risk_distribution(self, X: pd.DataFrame, risk_col: str = "high_risk") -> pd.DataFrame:
-        """Per-cluster size, risk count, and risk rate for a binary risk column."""
-        records = []
-        for cid, members in self.model.clusters_.items():
-            aligned = members.loc[members.index.intersection(X.index)]
-            size = len(aligned)
-            risk_count = int(aligned[risk_col].sum()) if risk_col in aligned.columns else 0
-            records.append({
-                "cluster": cid,
-                "size": size,
-                "risk_count": risk_count,
-                "risk_rate": risk_count / size if size > 0 else float("nan"),
-            })
-        return pd.DataFrame(records).set_index("cluster").sort_index()
 
     def plot_feature_heatmap(self, X: pd.DataFrame, ax=None):
         """Heatmap of z-scored per-cluster feature means."""

@@ -14,37 +14,58 @@ class GroupModel(BaseEstimator, ABC):
         pass
 
     @abstractmethod
-    def predict(self, X: pd.DataFrame):
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
         pass
 
     @abstractmethod
     def assign_cluster(self, X: pd.DataFrame):
         pass
 
+    @property
+    def labels_(self) -> pd.Series:
+        if not hasattr(self, "clusters_"):
+            raise RuntimeError("No clusters yet — call predict() first.")
+
+        return pd.Series(
+            {
+                pid: cid
+                for cid, members in self.clusters_.items()
+                for pid in members.index
+            }
+        )
+
+    def print_clusters(self, max_rows: int = 5) -> None:
+        if not hasattr(self, "clusters_"):
+            raise RuntimeError("No clusters yet — call predict() first.")
+
+        for cid, members in self.clusters_.items():
+            print(f"── Cluster {cid}  ({len(members)} members) {'─' * 30}")
+            print(members.head(max_rows).to_string())
+            if len(members) > max_rows:
+                print(f"   ... {len(members) - max_rows} more rows")
+            print()
+
 
 class BaselineGroupModel(GroupModel):
     def fit(self, X: pd.DataFrame, y=None):
         self.n_fitted_samples_ = len(X)
-        self.n_fitted_samples = len(X)
         self.rng_ = np.random.RandomState(self.random_state)
         return self
 
-    def predict(self, X) -> list[pd.DataFrame]:
-        shuffled = (
-            X.copy()
-            .sample(frac=1, random_state=self.random_state)
-            .reset_index(drop=True)
-        )
-        groups = [
-            shuffled.iloc[i : i + self.group_size]
-            for i in range(0, self.n_fitted_samples_, self.group_size)
-        ]
-        self.n_groups = len(groups)
-        self.clusters_ = {i: g for i, g in enumerate(groups)}
-        return groups
+    def predict(self, X) -> np.ndarray:
+        shuffled_idx = X.sample(frac=1, random_state=self.random_state).index
+        labels = np.empty(len(X), dtype=int)
+        for cid, start in enumerate(range(0, self.n_fitted_samples_, self.group_size)):
+            for idx in shuffled_idx[start : start + self.group_size]:
+                labels[X.index.get_loc(idx)] = cid
+        self.clusters_ = {cid: X.iloc[labels == cid] for cid in range(labels.max() + 1)}
+        self.n_groups = len(self.clusters_)
+        return labels
 
     def assign_cluster(self, X) -> int:
-        available = [cid for cid in self.clusters_ if len(self.clusters_[cid]) < self.group_size]
+        available = [
+            cid for cid in self.clusters_ if len(self.clusters_[cid]) < self.group_size
+        ]
         if available:
             cid = int(self.rng_.choice(available))
             self.clusters_[cid] = pd.concat([self.clusters_[cid], X])
