@@ -8,6 +8,7 @@ class GroupModel(BaseEstimator, ABC):
     def __init__(self, group_size: int = 12, random_state=123):
         self.group_size = group_size
         self.random_state = random_state
+        self.clusters_ = {}
 
     @abstractmethod
     def fit(self, X: pd.DataFrame, y=None):
@@ -26,24 +27,16 @@ class GroupModel(BaseEstimator, ABC):
         if not hasattr(self, "clusters_"):
             raise RuntimeError("No clusters yet — call predict() first.")
 
-        return pd.Series(
+        s = pd.Series(
             {
                 pid: cid
                 for cid, members in self.clusters_.items()
                 for pid in members.index
             }
         )
+        s.index.name = "patient_id"
+        return s
 
-    def print_clusters(self, max_rows: int = 5) -> None:
-        if not hasattr(self, "clusters_"):
-            raise RuntimeError("No clusters yet — call predict() first.")
-
-        for cid, members in self.clusters_.items():
-            print(f"── Cluster {cid}  ({len(members)} members) {'─' * 30}")
-            print(members.head(max_rows).to_string())
-            if len(members) > max_rows:
-                print(f"   ... {len(members) - max_rows} more rows")
-            print()
 
 
 class BaselineGroupModel(GroupModel):

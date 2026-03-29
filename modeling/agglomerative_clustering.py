@@ -7,8 +7,12 @@ import math
 
 class AggloGroupModel(GroupModel):
     def __init__(
-        self, group_size=12, random_state=123, connectivity=None, feature_weights=None
-    ):
+        self,
+        group_size: int = 12,
+        random_state: int = 123,
+        connectivity=None,
+        feature_weights: dict | None = None,
+    ) -> None:
         super().__init__(group_size=group_size, random_state=random_state)
         self.connectivity = connectivity  # sparse/dense matrix or None
         self.feature_weights = feature_weights  # dict {feature_name: float} or None
@@ -25,7 +29,7 @@ class AggloGroupModel(GroupModel):
         return self
 
     def _apply_weights(self, X_num: pd.DataFrame) -> np.ndarray:
-        return X_num[self.feature_cols_].fillna(0).values * self.weights_
+        return X_num[self.feature_cols_].values * self.weights_
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         n_clusters = math.ceil(len(X) / self.group_size)
@@ -40,10 +44,14 @@ class AggloGroupModel(GroupModel):
         self._update_cluster_means()
 
         # Enforce hard cap: split any cluster that exceeds group_size
-        oversized = [cid for cid, m in self.clusters_.items() if len(m) > self.group_size]
+        oversized = [
+            cid for cid, m in self.clusters_.items() if len(m) > self.group_size
+        ]
         while oversized:
             self._split_cluster(oversized.pop())
-            oversized = [cid for cid, m in self.clusters_.items() if len(m) > self.group_size]
+            oversized = [
+                cid for cid, m in self.clusters_.items() if len(m) > self.group_size
+            ]
 
         return self.labels_.loc[X.index].values
 

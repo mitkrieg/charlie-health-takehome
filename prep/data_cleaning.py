@@ -12,7 +12,6 @@ transformer = PatientDataTransformer()
 df_clean = transformer.fit_transform(df_raw)
 """
 
-import uuid
 import warnings
 import numpy as np
 import pandas as pd
@@ -227,7 +226,7 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
             df.drop(columns=["name"], inplace=True)
 
         # Strip string whitespace
-        str_cols = df.select_dtypes("object").columns
+        str_cols = df.select_dtypes(str).columns
         df[str_cols] = df[str_cols].apply(lambda s: s.str.strip())
 
         # Standardise free-text categoricals
@@ -313,6 +312,7 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
             .map({"Unhealthy": 0, "Moderate": 1, "Healthy": 2})
             .fillna(1)
         )
+        df["unhealthy_diet"] = (df["dietary_habits"] == "Unhealthy").astype(int)
 
         # Education level (ordinal 0–3)
         df["education_level"] = (
@@ -392,7 +392,11 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
 
         df["high_risk"] = (
             (df["stress_index"] >= self.stress_75_)
-            & ((df["family_history"] == 1) | (df["suicidal_thoughts"] == 1))
+            & (
+                (df["family_history"] == 1)
+                | (df["suicidal_thoughts"] == 1)
+                | (df["depression"] == 1)
+            )
         ).astype(int)
 
         df["cgpa_band"] = pd.cut(
@@ -401,7 +405,16 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
             labels=["<5", "5-6", "6-7", "7-8", "8+"],
             right=True,
         )
-        df["cgpa_band"] = df["cgpa_band"].fillna("non_student")
+        df["cgpa_band"] = df["cgpa_band"].astype(str).fillna("non_student")
+
+        df["treatment_not_needed"] = (
+            (df["depression"] == 0)
+            & (df["pressure"] <= 2)
+            & (df["satisfaction"] >= 4)
+            & (df["suicidal_thoughts"] == 0)
+            & (df["sleep_duration"] >= 2)
+            & (df["dietary_enc"] >= 1)
+        )
 
         return df
 
@@ -415,7 +428,6 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
         df.drop_duplicates(inplace=True)
         n_dropped_dup = before - len(df)
 
-        df.index = [str(uuid.uuid4()) for _ in range(len(df))]
         df.index.name = "patient_id"
 
         self.n_dropped_na_ = n_dropped_na
