@@ -1,0 +1,59 @@
+Split: 2172 initial rows, 384 newcomer rows (test_size=0.15, random_state=42)
+
+POST /initialize → {
+  "n_patients": 2172,
+  "n_groups": 280,
+  "group_stats": {
+    "n_groups": 280,
+    "min": 2,
+    "max": 12,
+    "mean": 7.757142857142857,
+    "std": 2.5700790109350686,
+    "cv": 0.33131773621630717
+  },
+  "silhouette": 0.034178,
+  "wcss_total": 17500.2773,
+  "initialized_at": "2026-03-30T06:03:36.436429+00:00"
+}
+GET /status → {
+  "initialized": true,
+  "initialized_at": "2026-03-30T06:03:36.436429+00:00",
+  "n_patients": 2172,
+  "n_groups": 280,
+  "group_stats": {
+    "n_groups": 280,
+    "min": 2,
+    "max": 12,
+    "mean": 7.757142857142857,
+    "std": 2.5700790109350686,
+    "cv": 0.33131773621630717
+  },
+  "silhouette": 0.034178,
+  "wcss_total": 17500.2773,
+  "wcss_mean_per_group": 62.501
+}
+GET /metrics → {
+  "silhouette": 0.034178,
+  "wcss_total": 17500.2773,
+  "wcss_mean_per_group": 62.501,
+  "group_stats": {
+    "n_groups": 280,
+    "min": 2,
+    "max": 12,
+    "mean": 7.757142857142857,
+    "std": 2.5700790109350686,
+    "cv": 0.33131773621630717
+  }
+}
+GET /groups → total_groups=280, total_patients=2172
+  (example) group 0: size=4
+
+POST /newcomers → n_assigned=384
+  patient_id=2172 → group 159, Δwcss=11.2698, centroid_drift=0.395632
+  patient_id=2173 → group 135, Δwcss=8.9994, centroid_drift=0.286029
+  patient_id=2174 → group 231, Δwcss=6.8278, centroid_drift=0.307946
+  patient_id=2175 → group 232, Δwcss=8.0537, centroid_drift=0.379231
+  patient_id=2176 → group 153, Δwcss=8.265, centroid_drift=0.338808
+  … (379 more)
+
+GET /patients → total=2556

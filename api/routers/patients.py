@@ -7,6 +7,7 @@ DELETE /patients/{id}              — remove a patient from their group
 POST   /newcomers                  — add one or more patients from a CSV upload;
                                      returns per-patient assignment + group impact
 """
+
 from __future__ import annotations
 
 import io
@@ -35,15 +36,17 @@ router = APIRouter(tags=["patients"])
 
 # ── List all patients ──────────────────────────────────────────────────────────
 
+
 @router.get("/patients", response_model=PatientListResponse)
 def list_patients():
     state = require_initialized()
     labels = state.model.labels_
-    patients = [PatientGroupInfo(patient_id=pid, group_id=int(gid)) for pid, gid in labels.items()]
+    patients = [
+        PatientGroupInfo(patient_id=pid, group_id=int(gid))
+        for pid, gid in labels.items()
+    ]
     return PatientListResponse(patients=patients, total=len(patients))
 
-
-# ── Patient group lookup ───────────────────────────────────────────────────────
 
 @router.get("/patients/{patient_id}/group", response_model=PatientGroupInfo)
 def get_patient_group(patient_id: int):
@@ -53,8 +56,6 @@ def get_patient_group(patient_id: int):
         raise HTTPException(404, f"Patient {patient_id} not found.")
     return PatientGroupInfo(patient_id=patient_id, group_id=int(labels[patient_id]))
 
-
-# ── Patient detail ─────────────────────────────────────────────────────────────
 
 @router.get("/patients/{patient_id}", response_model=PatientDetail)
 def get_patient(patient_id: int):
@@ -69,8 +70,6 @@ def get_patient(patient_id: int):
         data.pop("patient_id", None)
     return PatientDetail(patient_id=patient_id, group_id=group_id, data=data)
 
-
-# ── Remove patient ─────────────────────────────────────────────────────────────
 
 @router.delete("/patients/{patient_id}", response_model=RemovePatientResponse)
 def remove_patient(patient_id: int):
@@ -106,6 +105,7 @@ def remove_patient(patient_id: int):
 
 # ── Add newcomers ──────────────────────────────────────────────────────────────
 
+
 @router.post("/newcomers", response_model=NewcomerResponse, status_code=201)
 async def add_newcomers(file: UploadFile = File(...)):
     """
@@ -122,7 +122,9 @@ async def add_newcomers(file: UploadFile = File(...)):
 
     try:
         newcomer_vecs: pd.DataFrame = state.vectorizer.transform(df_new)
-        newcomer_feats: pd.DataFrame = state.vectorizer.pipeline.steps[0][1].transform(df_new)
+        newcomer_feats: pd.DataFrame = state.vectorizer.pipeline.steps[0][1].transform(
+            df_new
+        )
     except Exception as exc:
         raise HTTPException(422, f"Feature transformation failed: {exc}")
 
@@ -143,8 +145,7 @@ async def add_newcomers(file: UploadFile = File(...)):
         # Snapshot the target cluster BEFORE assignment (we don't know it yet)
         # Capture all cluster means so we can measure drift after
         pre_means = {
-            cid: state.model.cluster_means_[cid].copy()
-            for cid in state.model.clusters_
+            cid: state.model.cluster_means_[cid].copy() for cid in state.model.clusters_
         }
         pre_sizes = {cid: len(m) for cid, m in state.model.clusters_.items()}
         pre_wcss = {

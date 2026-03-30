@@ -3,6 +3,7 @@
 /status      — overall health check
 /metrics     — system-wide clustering quality metrics
 """
+
 from __future__ import annotations
 
 import io
@@ -23,46 +24,59 @@ from api.utils import cluster_wcss, safe_float
 
 router = APIRouter(tags=["system"])
 
-# ── Feature configuration (mirrors the notebook) ──────────────────────────────
-
 NUMERIC_FEATURES = [
-    "age", "sleep_duration", "suicidal_thoughts", "workstudy_hours",
-    "financial_stress", "family_history", "depression", "pressure",
-    "satisfaction", "gender_enc", "is_professional", "dietary_enc",
-    "education_level", "city_lat", "city_lon",
-    "stress_index", "wellbeing_score", "worklife_balance", "high_risk",
+    "age",
+    "sleep_duration",
+    "suicidal_thoughts",
+    "workstudy_hours",
+    "financial_stress",
+    "family_history",
+    "depression",
+    "pressure",
+    "satisfaction",
+    "gender_enc",
+    "is_professional",
+    "dietary_enc",
+    "education_level",
+    "city_lat",
+    "city_lon",
+    "stress_index",
+    "wellbeing_score",
+    "worklife_balance",
+    "high_risk",
 ]
 CATEGORICAL_FEATURES = ["city", "profession_category", "age_group", "cgpa_band"]
 BOOLEAN_FEATURES: list[str] = []
 
 # Clinical feature weights (numeric__ prefix = post-ColumnTransformer column names)
 CLINICAL_WEIGHTS: dict[str, float] = {
-    "numeric__high_risk":         3.0,
-    "numeric__depression":        2.5,
+    "numeric__high_risk": 3.0,
+    "numeric__depression": 2.5,
     "numeric__suicidal_thoughts": 2.0,
-    "numeric__stress_index":      2.0,
-    "numeric__financial_stress":  1.5,
-    "numeric__wellbeing_score":   1.5,
-    "numeric__pressure":          1.5,
-    "numeric__family_history":    1.5,
+    "numeric__stress_index": 2.0,
+    "numeric__financial_stress": 1.5,
+    "numeric__wellbeing_score": 1.5,
+    "numeric__pressure": 1.5,
+    "numeric__family_history": 1.5,
 }
 
 
 def _build_attribute_connectivity(init_feats: pd.DataFrame) -> sp.csr_matrix:
     """
     Sparse connectivity matrix: two patients are connected iff they share
-    is_professional × age_group × gender_enc.  Vectorised via merge (avoids O(n²) loop).
+    is_professional x age_group x gender_enc.  Vectorised via merge (avoids O(n²) loop).
     """
-    feats = (
-        init_feats[["is_professional", "age_group", "gender_enc"]]
-        .reset_index(drop=True)
-        .copy()
-    )
+    connectivity_attrs = [
+        "is_professional",
+        "age_group",
+        "suicidal_thoughts",
+        "unhealthy_diet",
+        "depression",
+    ]
+    feats = init_feats[connectivity_attrs].reset_index(drop=True).copy()
     feats["_pos"] = np.arange(len(feats))
 
-    pairs = feats.merge(
-        feats, on=["is_professional", "age_group", "gender_enc"], suffixes=("_i", "_j")
-    )
+    pairs = feats.merge(feats, on=connectivity_attrs, suffixes=("_i", "_j"))
     pairs = pairs[pairs["_pos_i"] != pairs["_pos_j"]]
 
     rows = pairs["_pos_i"].values
@@ -72,8 +86,6 @@ def _build_attribute_connectivity(init_feats: pd.DataFrame) -> sp.csr_matrix:
         (np.ones(len(rows), dtype=np.float32), (rows, cols)), shape=(n, n)
     )
 
-
-# ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.post("/initialize", response_model=InitializeResponse, status_code=201)
 async def initialize(file: UploadFile = File(...)):
@@ -100,11 +112,7 @@ async def initialize(file: UploadFile = File(...)):
 
         connectivity = _build_attribute_connectivity(init_feats)
 
-        model = AggloGroupModel(
-            group_size=12,
-            connectivity=connectivity,
-            feature_weights=CLINICAL_WEIGHTS,
-        )
+        model = AggloGroupModel(group_size=12, connectivity=connectivity)
         model.fit(init_vecs)
         model.predict(init_vecs)
 
@@ -151,7 +159,9 @@ def status():
 
     return SystemStatus(
         initialized=True,
-        initialized_at=state.initialized_at.isoformat() if state.initialized_at else None,
+        initialized_at=state.initialized_at.isoformat()
+        if state.initialized_at
+        else None,
         n_patients=n_patients,
         n_groups=n_groups,
         group_stats=stats,
