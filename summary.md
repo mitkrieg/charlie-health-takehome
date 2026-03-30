@@ -38,23 +38,23 @@ Ward linkage (minimises within-cluster variance) is used over average linkage. A
 
 | Model | Groups | Mean WCSS | Silhouette | Notes |
 |---|---|---|---|---|
-| **Baseline (random)** | 181 | ~2,039 | negative | No cohesion by design; confirms the need for structure |
-| **Agglomerative (ward)** | 264 | ~51 | positive, ~0 | 40× WCSS reduction; group count rises due to cap enforcement splits |
-| **Agglomerative Average linkage** | — | lower | more negative | Better global WCSS but produces singletons; negative silhouette means more patients are outliers in their group |
-| **Clinical weights (ward)** | — | slight ↓ | similar | Upweighting depression / suicidal thoughts / stress pulls clinically similar patients together but slightly hurts demographic uniformity |
-| **k-NN connectivity** | — | similar | slight ↑ | Local neighbor constraint reduces bridging artifacts; modest gain |
-| **Demographic connectivity** (`is_professional × age_group × gender_enc`) | — | slight ↑ | similar | Hard structural constraint significantly boosts demographic cohesion; WCSS rises slightly as the trade-off |
-| **Clinical weights + demographic connectivity** | — | moderate | positive | Best balance: clinically weighted distances enforce symptom similarity; demographic connectivity ensures merge eligibility is demographically sensible |
+| **Baseline (random)** | 181 | ~2,039 | -0.35  | No cohesion by design; confirms the need for structure |
+| **Agglomerative (ward)** | 264 | ~51 | 0.06 | 40× WCSS reduction; group count rises due to cap enforcement splits |
+| **Agglomerative Average linkage** | 308 | 0.07 | more negative | Better global WCSS but produces singletons |
+| **Clinical weights (ward)** | 274 | ~50 | 0.05 | Upweighting depression / suicidal thoughts / stress pulls clinically similar patients together but slightly hurts demographic uniformity |
+| **k-NN connectivity** | 265 | ~50 | 0.06 | Local neighbor constraint reduces bridging artifacts; modest gain |
+| **Demographic connectivity** (`is_professional × age_group × gender_enc`) | 278 |~55 | 0.01 | Hard structural constraint significantly boosts demographic cohesion; WCSS rises slightly as the trade-off |
+| **Clinical weights + demographic connectivity** | 273 | ~54 | 0.02 | Best balance: clinically weighted distances enforce symptom similarity; demographic connectivity ensures merge eligibility is demographically sensible |
 
 ### Why connectivity constraints?
 
-Without them, ward linkage can bridge demographically or clinically dissimilar patients through a chain of intermediate points. Constraining merge eligibility to patients who share certain attributes enforces a structural guarantee — rather than relying on the distance metric alone to separate groups that differ on these dimensions.
+Without a connectivity matrix, ward linkage can bridge demographically or clinically dissimilar patients through a chain of intermediate points. Constraining merge eligibility to patients who share certain attributes enforces a certain level of matching, rather than relying on the distance metric alone to separate groups that differ on these dimensions.
 
 ---
 
 ## Newcomer Assignment
 
-Newcomers are assigned online — one at a time — to the nearest cluster (by weighted Euclidean distance to centroid) with remaining capacity. When all clusters are full, the nearest is split and the newcomer joins the new half.
+Newcomers are assigned online one at a time to the nearest cluster (by weighted Euclidean distance to centroid) with remaining capacity. When all clusters are full, the nearest cluster is split using agglomerative clustering.
 
 Mean WCSS grows steadily with each newcomer added. At 325 newcomers this growth is modest. Two risks scale with the newcomer pool:
 
