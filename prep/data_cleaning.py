@@ -332,6 +332,16 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
         """Geocode unique city names; returns city → (lat, lon) mapping."""
         if "city" not in df.columns:
             return {}
+
+        cache_path = Path("./data/geocoding_cache.csv")
+
+        if cache_path.exists() and cache_path.is_file():
+            cache = {
+                row["city"]: (row["city_lat"], row["city_lon"])
+                for i, row in pd.read_csv(cache_path).iterrows()
+            }
+            return cache
+
         geolocator = Nominatim(user_agent="patient_data_transformer")
         geocode = RateLimiter(
             geolocator.geocode, min_delay_seconds=1, error_wait_seconds=2
@@ -357,6 +367,18 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
         df["city_lon"] = df["city"].map(
             lambda c: self.city_coords_.get(c, (np.nan, np.nan))[1]
         )
+        # Failed lookups (network errors, rate limits) leave NaN. Downstream models
+        # such as AgglomerativeClustering reject NaN — impute from successful rows
+        # or a fixed centroid when all geocodes failed.
+        # lat_med = df["city_lat"].median()
+        # lon_med = df["city_lon"].median()
+        # fb_lat, fb_lon = 20.5937, 78.9629
+        # if pd.isna(lat_med):
+        #     lat_med = fb_lat
+        # if pd.isna(lon_med):
+        #     lon_med = fb_lon
+        # df["city_lat"] = df["city_lat"].fillna(lat_med)
+        # df["city_lon"] = df["city_lon"].fillna(lon_med)
         return df
 
     def _engineer(self, df):
@@ -369,7 +391,7 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
             df["satisfaction"] + df["sleep_duration"] + df["dietary_enc"]
         ) / 3
 
-        df["physical_score"] = ((5 - df["sleep_duration"]) + df["dietary_enc"]) / 2
+        df["physical_score"] = (df["sleep_duration"] + df["dietary_enc"]) / 2
 
         df["emotional_score"] = (
             (5 - df["satisfaction"])
@@ -414,7 +436,7 @@ class PatientDataTransformer(BaseEstimator, TransformerMixin):
             & (df["suicidal_thoughts"] == 0)
             & (df["sleep_duration"] >= 2)
             & (df["dietary_enc"] >= 1)
-        )
+        ).astype(int)
 
         return df
 

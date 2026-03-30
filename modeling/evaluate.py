@@ -293,7 +293,12 @@ class Evaluator:
 
     def assignment_drift(self, X_new: pd.DataFrame) -> pd.DataFrame:
         """Assign new patients one-by-one and report per-cluster drift metrics."""
-        feature_cols = self.model.feature_cols_
+        if hasattr(self.model, "feature_cols_"):
+            feature_cols = self.model.feature_cols_
+        else:
+            # BaselineGroupModel stores the raw input; infer numeric columns from clusters
+            sample = next(iter(self.model.clusters_.values()))
+            feature_cols = sample.select_dtypes(include="number").columns.tolist()
 
         # 1. Snapshot pre-assignment state
         pre_sizes = {}
@@ -307,11 +312,17 @@ class Evaluator:
             pre_mean_dist[cid] = mean_dist
             pre_means[cid] = centroid
 
-        # 2. Assign all new rows one at a time
+        # 2. Assign all new rows one at a time, recording mean WCSS after each step
         assigned_to: dict = {}
+        self.wcss_timeline_ = []
         for idx in X_new.index:
             cid = self.model.assign_cluster(X_new.loc[[idx]])
             assigned_to[idx] = cid
+            total = sum(
+                _cluster_stats(m, feature_cols)[0]
+                for m in self.model.clusters_.values()
+            )
+            self.wcss_timeline_.append(total / len(self.model.clusters_))
 
         n_assigned_per_cluster: dict = {}
         for cid in assigned_to.values():
@@ -361,58 +372,238 @@ class Evaluator:
         result.loc[result["size_pre"] == 0, "wcss_delta"] = float("nan")
         return result
 
-    def plot_assignment_drift(self, drift: pd.DataFrame, ax=None) -> plt.Axes:
-        """Grouped bar chart of WCSS pre/post per cluster with centroid drift on a secondary axis."""
-        if ax is None:
-            _, ax = plt.subplots(figsize=(14, 5))
+    def drift_report(self, drift: pd.DataFrame) -> str:
+        """Scalar summary of newcomer assignment drift (mirrors report() style).
 
-        cids = drift.index.tolist()
-        x = np.arange(len(cids))
-        width = 0.35
+        drift — DataFrame returned by assignment_drift().
+        """
+        total_clusters = len(drift)
+        aff = drift[drift["n_assigned"] > 0]
+        n_affected = len(aff)
+        n_new = int((drift["size_pre"] == 0).sum())
+        n_newcomers = int(drift["n_assigned"].sum())
 
-        for i, cid in enumerate(cids):
-            alpha = 1.0 if drift.loc[cid, "n_assigned"] > 0 else 0.4
-            wcss_pre = drift.loc[cid, "wcss_pre"]
-            wcss_post = drift.loc[cid, "wcss_post"]
-            ax.bar(
-                x[i] - width / 2,
-                wcss_pre if not np.isnan(wcss_pre) else 0,
-                width,
-                color="steelblue",
-                alpha=alpha,
-                label="WCSS pre" if i == 0 else "_nolegend_",
-            )
-            ax.bar(
-                x[i] + width / 2,
-                wcss_post,
-                width,
-                color="navy",
-                alpha=alpha,
-                label="WCSS post" if i == 0 else "_nolegend_",
-            )
+        pre_total = float(drift["wcss_pre"].sum(skipna=True))
+        post_total = float(drift["wcss_post"].sum(skipna=True))
+        wcss_abs = post_total - pre_total
+        wcss_pct = (wcss_abs / pre_total * 100) if pre_total != 0 else float("nan")
 
-        ax.set_xlabel("Cluster ID")
-        ax.set_ylabel("WCSS")
-        ax.set_xticks(x)
-        ax.set_xticklabels(cids)
-        ax.set_title("Cluster Assignment Drift")
+        wcss_mean_delta = float(aff["wcss_delta"].mean(skipna=True))
+        worst_cid = drift["wcss_delta"].idxmax(skipna=True)
+        worst_val = float(drift.loc[worst_cid, "wcss_delta"])
 
-        ax2 = ax.twinx()
-        drift_vals = drift["centroid_drift"].values
-        ax2.plot(
-            x,
-            drift_vals,
-            color="orange",
-            marker="o",
-            linewidth=1.5,
-            label="Centroid drift",
+        centroid_mean = float(aff["centroid_drift"].mean(skipna=True))
+        centroid_max_cid = aff["centroid_drift"].idxmax(skipna=True)
+        centroid_max_val = float(aff.loc[centroid_max_cid, "centroid_drift"])
+
+        pre_dist = float(aff["mean_dist_pre"].mean(skipna=True))
+        post_dist = float(aff["mean_dist_post"].mean(skipna=True))
+        dist_pct = ((post_dist - pre_dist) / pre_dist * 100) if pre_dist != 0 else float("nan")
+
+        sign = "+" if wcss_abs >= 0 else ""
+        sign_d = "+" if wcss_mean_delta >= 0 else ""
+        sign_w = "+" if worst_val >= 0 else ""
+        sign_dist = "+" if (post_dist - pre_dist) >= 0 else ""
+
+        lines = [
+            f"Drift report ({n_newcomers} newcomers → {total_clusters} clusters):",
+            f"  Coverage:       {n_affected} of {total_clusters} clusters affected ({100 * n_affected / total_clusters:.1f}%)  |  {n_new} new clusters from splits",
+            f"  WCSS total:     pre={pre_total:,.0f}  post={post_total:,.0f}  Δ={sign}{wcss_abs:,.1f}  ({sign}{wcss_pct:.1f}%)",
+            f"  WCSS delta:     mean={sign_d}{wcss_mean_delta:.1f}  worst=cluster {worst_cid} ({sign_w}{worst_val:.1f})",
+            f"  Centroid drift: mean={centroid_mean:.1f}  max={centroid_max_val:.1f} (cluster {centroid_max_cid})",
+            f"  Cohesion:       mean dist pre={pre_dist:.2f}  post={post_dist:.2f}  ({sign_dist}{dist_pct:.1f}%)  [affected clusters]",
+        ]
+        return "\n".join(lines)
+
+    def plot_assignment_drift(self, drift: pd.DataFrame) -> plt.Figure:
+        """Two-panel chart for cluster assignment drift (affected clusters only).
+
+        Only clusters that received at least one newcomer are shown.
+
+        Top panel    — WCSS increase (wcss_delta) per affected cluster, coloured
+                       by n_assigned so high-traffic clusters stand out.
+        Bottom panel — Centroid drift per affected cluster.
+
+        Returns the Figure for further customisation.
+        """
+        affected = drift[drift["n_assigned"] > 0].copy()
+        n_total = len(drift)
+        n_affected = len(affected)
+
+        fig, (ax_wcss, ax_drift) = plt.subplots(
+            2, 1, figsize=(max(10, n_affected * 0.4), 8), sharex=True,
+            gridspec_kw={"hspace": 0.08},
         )
-        ax2.set_ylabel("Centroid drift (Euclidean)", color="orange")
-        ax2.tick_params(axis="y", labelcolor="orange")
 
-        lines1, labels1 = ax.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
+        x = np.arange(n_affected)
+        cids = affected.index.tolist()
+
+        # Colour bars by n_assigned (darker = more newcomers)
+        norm = plt.Normalize(vmin=1, vmax=max(affected["n_assigned"].max(), 2))
+        cmap = plt.cm.Blues
+        colours = [cmap(0.4 + 0.6 * norm(v)) for v in affected["n_assigned"]]
+
+        ax_wcss.bar(x, affected["wcss_delta"].clip(lower=0), color=colours)
+        ax_wcss.axhline(0, color="black", linewidth=0.8)
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        fig.colorbar(sm, ax=ax_wcss, label="n_assigned", pad=0.01)
+        ax_wcss.set_ylabel("WCSS increase (Δ)")
+        ax_wcss.set_title(
+            f"Assignment Drift — {n_affected} of {n_total} clusters received newcomers"
+        )
+
+        ax_drift.bar(x, affected["centroid_drift"].fillna(0), color=colours)
+        ax_drift.set_ylabel("Centroid drift (Euclidean)")
+        ax_drift.set_xlabel("Cluster ID")
+        ax_drift.set_xticks(x)
+        ax_drift.set_xticklabels(cids, rotation=90, fontsize=8)
+
+        fig.tight_layout()
+        return fig
+
+    def plot_drift_summary(self, drift: pd.DataFrame, fig=None) -> plt.Figure:
+        """4-panel summary dashboard of assignment drift health.
+
+        Parameters
+        ----------
+        drift : DataFrame returned by ``assignment_drift()``.
+        fig   : optional pre-created Figure (must have room for 4 subplots).
+
+        Returns the Figure.
+        """
+        affected = drift[drift["n_assigned"] > 0].copy()
+        n_affected = len(affected)
+        n_total = len(drift)
+        n_newcomers = int(drift["n_assigned"].sum())
+
+        # --- edge case: nothing to show ---
+        if n_affected == 0:
+            if fig is None:
+                fig = plt.figure(figsize=(14, 10))
+            fig.text(0.5, 0.5, "No clusters received newcomers",
+                     ha="center", va="center", fontsize=16)
+            return fig
+
+        if fig is None:
+            fig, axes = plt.subplots(2, 2, figsize=(14, 10),
+                                     constrained_layout=True)
+        else:
+            axes = np.array(fig.subplots(2, 2))
+        ax_a, ax_b = axes[0]
+        ax_c, ax_d = axes[1]
+
+        wcss_delta = affected["wcss_delta"].dropna()
+        median_val = float(wcss_delta.median())
+        p90_val = float(np.nanpercentile(wcss_delta, 90))
+
+        # ── Panel A: WCSS Delta Distribution ──
+        sns.histplot(wcss_delta, kde=True, ax=ax_a, color="steelblue")
+        ax_a.axvline(median_val, color="navy", linestyle="--", linewidth=1.2,
+                     label=f"median {median_val:.1f}")
+        ax_a.axvline(p90_val, color="firebrick", linestyle="--", linewidth=1.2,
+                     label=f"P90 {p90_val:.1f}")
+        ax_a.legend(fontsize=9)
+        ax_a.set_title("WCSS Change Distribution (affected clusters)")
+        ax_a.set_xlabel("wcss_delta")
+
+        # ── Panel B: Assignment Load vs. Cohesion Impact ──
+        sc = ax_b.scatter(affected["n_assigned"], affected["wcss_delta"],
+                          c=affected["size_pre"], cmap="YlOrRd",
+                          edgecolors="grey", linewidths=0.5, s=40)
+        fig.colorbar(sc, ax=ax_b, label="Pre-assignment size")
+        # annotate outliers above P90
+        outliers = affected[affected["wcss_delta"] > p90_val]
+        for cid, row in outliers.iterrows():
+            ax_b.annotate(str(cid), (row["n_assigned"], row["wcss_delta"]),
+                          fontsize=7, color="firebrick",
+                          textcoords="offset points", xytext=(4, 4))
+        ax_b.set_xlabel("n_assigned")
+        ax_b.set_ylabel("wcss_delta")
+        ax_b.set_title("Assignment Load vs. Cohesion Impact")
+
+        # ── Panel C: Mean Distance Pre vs. Post ──
+        existing = affected[affected["size_pre"] > 0].copy()
+        sc_c = ax_c.scatter(existing["mean_dist_pre"], existing["mean_dist_post"],
+                            c=existing["n_assigned"], cmap="Blues",
+                            edgecolors="grey", linewidths=0.5, s=40)
+        fig.colorbar(sc_c, ax=ax_c, label="n_assigned")
+        # y = x reference line
+        lo = min(existing["mean_dist_pre"].min(), existing["mean_dist_post"].min())
+        hi = max(existing["mean_dist_pre"].max(), existing["mean_dist_post"].max())
+        margin = (hi - lo) * 0.05
+        ax_c.plot([lo - margin, hi + margin], [lo - margin, hi + margin],
+                  color="grey", linestyle="--", linewidth=0.8)
+        n_worsened = int((existing["mean_dist_post"] > existing["mean_dist_pre"]).sum())
+        n_existing = len(existing)
+        ax_c.text(0.05, 0.95, f"{n_worsened} of {n_existing} clusters worsened",
+                  transform=ax_c.transAxes, fontsize=9, verticalalignment="top",
+                  bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.5))
+        ax_c.set_xlabel("mean_dist_pre")
+        ax_c.set_ylabel("mean_dist_post")
+        ax_c.set_title("Mean Distance Pre vs. Post")
+
+        # ── Panel D: Top 10 Most Impacted Clusters ──
+        top_n = min(10, n_affected)
+        top = affected.nlargest(top_n, "wcss_delta")
+        y_labels = [
+            f"C{cid}  (n={int(row['n_assigned'])}, drift={row['centroid_drift']:.1f})"
+            for cid, row in top.iterrows()
+        ]
+        bars = ax_d.barh(range(top_n), top["wcss_delta"], color="steelblue")
+        ax_d.set_yticks(range(top_n))
+        ax_d.set_yticklabels(y_labels, fontsize=8)
+        ax_d.invert_yaxis()
+        ax_d.set_xlabel("wcss_delta")
+        ax_d.set_title("Top 10 Most Impacted Clusters")
+
+        # ── Suptitle ──
+        pct_worsened = (100 * n_worsened / n_existing) if n_existing > 0 else 0
+        fig.suptitle(
+            f"{n_newcomers} newcomers → {n_affected}/{n_total} clusters affected  |  "
+            f"median WCSS Δ = {median_val:.1f}  |  "
+            f"{pct_worsened:.0f}% of affected clusters worsened",
+            fontsize=12, fontweight="bold",
+        )
+
+        return fig
+
+    _TIMELINE_COLORS = ["steelblue", "darkorange", "seagreen", "firebrick",
+                         "mediumpurple", "goldenrod", "deeppink", "teal"]
+
+    def plot_wcss_timeline(self, ax=None, label=None) -> plt.Axes:
+        """Line chart of mean WCSS across all clusters after each newcomer assignment.
+
+        Requires ``assignment_drift()`` to have been called first (populates
+        ``self.wcss_timeline_``).
+
+        Parameters
+        ----------
+        ax    : pass an existing Axes to overlay multiple models on one chart.
+        label : legend label; defaults to the model's class name.
+        """
+        if not hasattr(self, "wcss_timeline_"):
+            raise RuntimeError("Call assignment_drift() before plot_wcss_timeline().")
+
+        if ax is None:
+            _, ax = plt.subplots(figsize=(12, 4))
+
+        if label is None:
+            label = type(self.model).__name__
+
+        # pick the next colour that hasn't been used on this axes
+        idx = len(ax.lines)
+        color = self._TIMELINE_COLORS[idx % len(self._TIMELINE_COLORS)]
+
+        steps = np.arange(1, len(self.wcss_timeline_) + 1)
+        tl = self.wcss_timeline_
+        slope = (tl[-1] - tl[0]) / len(tl) if len(tl) > 1 else 0.0
+        sign = "+" if slope >= 0 else ""
+        ax.plot(steps, tl, linewidth=1.5, color=color,
+                label=f"{label}  ({sign}{slope:.3f}/newcomer)")
+        ax.set_xlabel("Newcomers assigned")
+        ax.set_ylabel("Mean WCSS per cluster")
+        ax.set_title("Mean WCSS over newcomer assignment")
+        ax.legend()
 
         return ax
 

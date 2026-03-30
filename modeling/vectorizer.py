@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
-
+import pandas as pd
 from prep.data_cleaning import PatientDataTransformer
 
 
@@ -17,11 +17,15 @@ class FeatureConfig:
 
 class Vectorizer:
     def __init__(
-        self, config: FeatureConfig, model: BaseEstimator | None = None
+        self,
+        config: FeatureConfig,
+        model: BaseEstimator | None = None,
+        remove_non_treatments=False,
     ) -> None:
         self.config = config
         self.model = model
         self.pipeline = self._build_pipeline(model)
+        self.remove_non_treatment = remove_non_treatments
 
     def _build_pipeline(self, model: BaseEstimator | None) -> Pipeline:
         data_transform = PatientDataTransformer()
@@ -55,7 +59,7 @@ class Vectorizer:
 
         return pipeline
 
-    def fit(self, X, y=None):
+    def fit(self, X: pd.DataFrame, y=None):
         self.pipeline.fit(X, y)
         return self
 
