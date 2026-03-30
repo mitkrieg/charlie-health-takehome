@@ -12,10 +12,16 @@ class AggloGroupModel(GroupModel):
         random_state: int = 123,
         connectivity=None,
         feature_weights: dict | None = None,
+        linkage="ward",
+        metric="euclidean",
+        separate_not_needed: bool = False,
     ) -> None:
         super().__init__(group_size=group_size, random_state=random_state)
         self.connectivity = connectivity  # sparse/dense matrix or None
         self.feature_weights = feature_weights  # dict {feature_name: float} or None
+        self.linkage = linkage
+        self.metric = metric
+        self.separate_not_needed = separate_not_needed
 
     def fit(self, X: pd.DataFrame, y=None):
         self.feature_cols_ = X.select_dtypes(include="number").columns.tolist()
@@ -31,37 +37,54 @@ class AggloGroupModel(GroupModel):
     def _apply_weights(self, X_num: pd.DataFrame) -> np.ndarray:
         return X_num[self.feature_cols_].values * self.weights_
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        n_clusters = math.ceil(len(X) / self.group_size)
+    def predict(self, X: pd.DataFrame, deny_mask=None) -> np.ndarray:
+        # Separate denied patients (treatment_not_needed) into group -1
+        if deny_mask is not None and deny_mask.any():
+            X_cluster = X[~deny_mask]
+            X_denied = X[deny_mask]
+        else:
+            X_cluster = X
+            X_denied = None
+
+        n_clusters = math.ceil(len(X_cluster) / self.group_size)
         agglo = AgglomerativeClustering(
             n_clusters=n_clusters,
             compute_distances=True,
             connectivity=self.connectivity,
+            metric=self.metric,
+            linkage=self.linkage,
         )
-        labels = agglo.fit_predict(self._apply_weights(X))
+        labels = agglo.fit_predict(self._apply_weights(X_cluster))
         self.agglo_model_ = agglo  # exposes .children_, .distances_, .labels_
-        self.clusters_ = {int(cid): X[labels == cid] for cid in set(labels)}
+        self.clusters_ = {int(cid): X_cluster[labels == cid] for cid in set(labels)}
+
+        if X_denied is not None and len(X_denied) > 0:
+            self.clusters_[-1] = X_denied
+
         self._update_cluster_means()
 
         # Enforce hard cap: split any cluster that exceeds group_size
         oversized = [
-            cid for cid, m in self.clusters_.items() if len(m) > self.group_size
+            cid for cid, m in self.clusters_.items()
+            if cid != -1 and len(m) > self.group_size
         ]
         while oversized:
             self._split_cluster(oversized.pop())
             oversized = [
-                cid for cid, m in self.clusters_.items() if len(m) > self.group_size
+                cid for cid, m in self.clusters_.items()
+                if cid != -1 and len(m) > self.group_size
             ]
 
         return self.labels_.loc[X.index].values
 
     def assign_cluster(self, X: pd.DataFrame) -> int:
         patient_vec = self._apply_weights(X[self.feature_cols_].iloc[[0]])[0]
+        active_cids = [cid for cid in self.clusters_ if cid != -1]
         distances = {
             cid: np.linalg.norm(
                 patient_vec - self.cluster_means_[cid].values * self.weights_
             )
-            for cid in self.clusters_
+            for cid in active_cids
         }
         sorted_clusters = sorted(distances, key=lambda cid: distances[cid])
 

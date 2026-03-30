@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -85,7 +87,24 @@ class Evaluator:
 
         return "\n".join(lines)
 
-    def plot_dendrogram(self, **kwargs):
+    def plot_dendrogram(
+        self,
+        ax=None,
+        truncate=True,
+        show_cut_line=True,
+        highlight_oversized=True,
+        **kwargs,
+    ):
+        """Dendrogram with truncation, cut line, and oversized-cluster highlighting.
+
+        Parameters
+        ----------
+        ax                 : optional Axes to draw on.
+        truncate           : collapse leaves so each represents an initial cluster.
+        show_cut_line      : draw a horizontal line at the agglomerative cut distance.
+        highlight_oversized: colour leaf labels red when cluster size > group_size.
+        **kwargs           : forwarded to ``scipy.cluster.hierarchy.dendrogram``.
+        """
         if not hasattr(self.model, "agglo_model_"):
             raise AttributeError(
                 "plot_dendrogram() requires AggloGroupModel — call predict() first "
@@ -98,7 +117,7 @@ class Evaluator:
             current_count = 0
             for child_idx in merge:
                 if child_idx < n_samples:
-                    current_count += 1  # leaf node
+                    current_count += 1
                 else:
                     current_count += counts[child_idx - n_samples]
             counts[i] = current_count
@@ -107,7 +126,72 @@ class Evaluator:
             [inner.children_, inner.distances_, counts]
         ).astype(float)
 
-        dendrogram(linkage_matrix, **kwargs)
+        n_clusters = math.ceil(n_samples / self.model.group_size)
+
+        # Cut threshold: midpoint between last accepted merge and first rejected merge
+        merge_distances = linkage_matrix[:, 2]
+        last_merge_idx = n_samples - n_clusters - 1
+        if 0 <= last_merge_idx < len(merge_distances):
+            cut_distance = merge_distances[last_merge_idx]
+            if last_merge_idx + 1 < len(merge_distances):
+                next_distance = merge_distances[last_merge_idx + 1]
+                cut_threshold = (cut_distance + next_distance) / 2
+            else:
+                cut_threshold = cut_distance
+        else:
+            cut_threshold = None
+
+        if ax is None:
+            _, ax = plt.subplots(figsize=(max(14, n_clusters * 0.08), 6))
+
+        defaults = {"ax": ax, "leaf_rotation": 90, "leaf_font_size": 8}
+        if truncate:
+            defaults["truncate_mode"] = "lastp"
+            defaults["p"] = n_clusters
+            defaults["show_leaf_counts"] = True
+        defaults.update(kwargs)
+
+        dendrogram(linkage_matrix, **defaults)
+
+        # Cut line
+        if show_cut_line and cut_threshold is not None:
+            ax.axhline(
+                y=cut_threshold,
+                color="red",
+                linestyle="--",
+                linewidth=1.2,
+                label=f"cut → {n_clusters} initial clusters",
+            )
+            ax.legend(fontsize=9, loc="upper right")
+
+        # Highlight leaves whose member count exceeds group_size
+        if (
+            highlight_oversized
+            and truncate
+            and defaults.get("truncate_mode") == "lastp"
+        ):
+            group_size = self.model.group_size
+            for lbl in ax.get_xticklabels():
+                text = lbl.get_text().strip()
+                if text.startswith("(") and text.endswith(")"):
+                    try:
+                        count = int(text[1:-1])
+                        if count > group_size:
+                            lbl.set_color("red")
+                            lbl.set_fontweight("bold")
+                    except ValueError:
+                        pass
+
+        linkage_method = getattr(self.model, "linkage", "ward")
+        ax.set_title(
+            f"Dendrogram — {n_clusters} initial clusters  |  "
+            f"group_size={self.model.group_size}  |  linkage={linkage_method}",
+            fontsize=11,
+        )
+        ax.set_xlabel("Cluster (leaf count)" if truncate else "Sample index")
+        ax.set_ylabel("Merge distance")
+
+        return ax
 
     def plot_cluster_sizes(self, ax=None):
         """Bar chart of cluster sizes with max-size reference line."""
@@ -398,7 +482,9 @@ class Evaluator:
 
         pre_dist = float(aff["mean_dist_pre"].mean(skipna=True))
         post_dist = float(aff["mean_dist_post"].mean(skipna=True))
-        dist_pct = ((post_dist - pre_dist) / pre_dist * 100) if pre_dist != 0 else float("nan")
+        dist_pct = (
+            ((post_dist - pre_dist) / pre_dist * 100) if pre_dist != 0 else float("nan")
+        )
 
         sign = "+" if wcss_abs >= 0 else ""
         sign_d = "+" if wcss_mean_delta >= 0 else ""
@@ -426,12 +512,15 @@ class Evaluator:
 
         Returns the Figure for further customisation.
         """
-        affected = drift[drift["n_assigned"] > 0].copy()
+        affected = drift[drift["n_assigned"] > 0].sort_values("wcss_delta", ascending=False).copy()
         n_total = len(drift)
         n_affected = len(affected)
 
         fig, (ax_wcss, ax_drift) = plt.subplots(
-            2, 1, figsize=(max(10, n_affected * 0.4), 8), sharex=True,
+            2,
+            1,
+            figsize=(max(10, n_affected * 0.4), 8),
+            sharex=True,
             gridspec_kw={"hspace": 0.08},
         )
 
@@ -445,8 +534,6 @@ class Evaluator:
 
         ax_wcss.bar(x, affected["wcss_delta"].clip(lower=0), color=colours)
         ax_wcss.axhline(0, color="black", linewidth=0.8)
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        fig.colorbar(sm, ax=ax_wcss, label="n_assigned", pad=0.01)
         ax_wcss.set_ylabel("WCSS increase (Δ)")
         ax_wcss.set_title(
             f"Assignment Drift — {n_affected} of {n_total} clusters received newcomers"
@@ -457,6 +544,10 @@ class Evaluator:
         ax_drift.set_xlabel("Cluster ID")
         ax_drift.set_xticks(x)
         ax_drift.set_xticklabels(cids, rotation=90, fontsize=8)
+
+        # Single colorbar spanning both panels so plot widths stay equal
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        fig.colorbar(sm, ax=[ax_wcss, ax_drift], label="n_assigned", pad=0.01)
 
         fig.tight_layout()
         return fig
@@ -480,13 +571,18 @@ class Evaluator:
         if n_affected == 0:
             if fig is None:
                 fig = plt.figure(figsize=(14, 10))
-            fig.text(0.5, 0.5, "No clusters received newcomers",
-                     ha="center", va="center", fontsize=16)
+            fig.text(
+                0.5,
+                0.5,
+                "No clusters received newcomers",
+                ha="center",
+                va="center",
+                fontsize=16,
+            )
             return fig
 
         if fig is None:
-            fig, axes = plt.subplots(2, 2, figsize=(14, 10),
-                                     constrained_layout=True)
+            fig, axes = plt.subplots(2, 2, figsize=(14, 10), constrained_layout=True)
         else:
             axes = np.array(fig.subplots(2, 2))
         ax_a, ax_b = axes[0]
@@ -498,46 +594,84 @@ class Evaluator:
 
         # ── Panel A: WCSS Delta Distribution ──
         sns.histplot(wcss_delta, kde=True, ax=ax_a, color="steelblue")
-        ax_a.axvline(median_val, color="navy", linestyle="--", linewidth=1.2,
-                     label=f"median {median_val:.1f}")
-        ax_a.axvline(p90_val, color="firebrick", linestyle="--", linewidth=1.2,
-                     label=f"P90 {p90_val:.1f}")
+        ax_a.axvline(
+            median_val,
+            color="navy",
+            linestyle="--",
+            linewidth=1.2,
+            label=f"median {median_val:.1f}",
+        )
+        ax_a.axvline(
+            p90_val,
+            color="firebrick",
+            linestyle="--",
+            linewidth=1.2,
+            label=f"P90 {p90_val:.1f}",
+        )
         ax_a.legend(fontsize=9)
         ax_a.set_title("WCSS Change Distribution (affected clusters)")
         ax_a.set_xlabel("wcss_delta")
 
         # ── Panel B: Assignment Load vs. Cohesion Impact ──
-        sc = ax_b.scatter(affected["n_assigned"], affected["wcss_delta"],
-                          c=affected["size_pre"], cmap="YlOrRd",
-                          edgecolors="grey", linewidths=0.5, s=40)
+        sc = ax_b.scatter(
+            affected["n_assigned"],
+            affected["wcss_delta"],
+            c=affected["size_pre"],
+            cmap="YlOrRd",
+            edgecolors="grey",
+            linewidths=0.5,
+            s=40,
+        )
         fig.colorbar(sc, ax=ax_b, label="Pre-assignment size")
         # annotate outliers above P90
         outliers = affected[affected["wcss_delta"] > p90_val]
         for cid, row in outliers.iterrows():
-            ax_b.annotate(str(cid), (row["n_assigned"], row["wcss_delta"]),
-                          fontsize=7, color="firebrick",
-                          textcoords="offset points", xytext=(4, 4))
+            ax_b.annotate(
+                str(cid),
+                (row["n_assigned"], row["wcss_delta"]),
+                fontsize=7,
+                color="firebrick",
+                textcoords="offset points",
+                xytext=(4, 4),
+            )
         ax_b.set_xlabel("n_assigned")
         ax_b.set_ylabel("wcss_delta")
         ax_b.set_title("Assignment Load vs. Cohesion Impact")
 
         # ── Panel C: Mean Distance Pre vs. Post ──
         existing = affected[affected["size_pre"] > 0].copy()
-        sc_c = ax_c.scatter(existing["mean_dist_pre"], existing["mean_dist_post"],
-                            c=existing["n_assigned"], cmap="Blues",
-                            edgecolors="grey", linewidths=0.5, s=40)
+        sc_c = ax_c.scatter(
+            existing["mean_dist_pre"],
+            existing["mean_dist_post"],
+            c=existing["n_assigned"],
+            cmap="Blues",
+            edgecolors="grey",
+            linewidths=0.5,
+            s=40,
+        )
         fig.colorbar(sc_c, ax=ax_c, label="n_assigned")
         # y = x reference line
         lo = min(existing["mean_dist_pre"].min(), existing["mean_dist_post"].min())
         hi = max(existing["mean_dist_pre"].max(), existing["mean_dist_post"].max())
         margin = (hi - lo) * 0.05
-        ax_c.plot([lo - margin, hi + margin], [lo - margin, hi + margin],
-                  color="grey", linestyle="--", linewidth=0.8)
+        ax_c.plot(
+            [lo - margin, hi + margin],
+            [lo - margin, hi + margin],
+            color="grey",
+            linestyle="--",
+            linewidth=0.8,
+        )
         n_worsened = int((existing["mean_dist_post"] > existing["mean_dist_pre"]).sum())
         n_existing = len(existing)
-        ax_c.text(0.05, 0.95, f"{n_worsened} of {n_existing} clusters worsened",
-                  transform=ax_c.transAxes, fontsize=9, verticalalignment="top",
-                  bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.5))
+        ax_c.text(
+            0.05,
+            0.95,
+            f"{n_worsened} of {n_existing} clusters worsened",
+            transform=ax_c.transAxes,
+            fontsize=9,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.5),
+        )
         ax_c.set_xlabel("mean_dist_pre")
         ax_c.set_ylabel("mean_dist_post")
         ax_c.set_title("Mean Distance Pre vs. Post")
@@ -562,13 +696,22 @@ class Evaluator:
             f"{n_newcomers} newcomers → {n_affected}/{n_total} clusters affected  |  "
             f"median WCSS Δ = {median_val:.1f}  |  "
             f"{pct_worsened:.0f}% of affected clusters worsened",
-            fontsize=12, fontweight="bold",
+            fontsize=12,
+            fontweight="bold",
         )
 
         return fig
 
-    _TIMELINE_COLORS = ["steelblue", "darkorange", "seagreen", "firebrick",
-                         "mediumpurple", "goldenrod", "deeppink", "teal"]
+    _TIMELINE_COLORS = [
+        "steelblue",
+        "darkorange",
+        "seagreen",
+        "firebrick",
+        "mediumpurple",
+        "goldenrod",
+        "deeppink",
+        "teal",
+    ]
 
     def plot_wcss_timeline(self, ax=None, label=None) -> plt.Axes:
         """Line chart of mean WCSS across all clusters after each newcomer assignment.
@@ -598,8 +741,13 @@ class Evaluator:
         tl = self.wcss_timeline_
         slope = (tl[-1] - tl[0]) / len(tl) if len(tl) > 1 else 0.0
         sign = "+" if slope >= 0 else ""
-        ax.plot(steps, tl, linewidth=1.5, color=color,
-                label=f"{label}  ({sign}{slope:.3f}/newcomer)")
+        ax.plot(
+            steps,
+            tl,
+            linewidth=1.5,
+            color=color,
+            label=f"{label}  ({sign}{slope:.3f}/newcomer)",
+        )
         ax.set_xlabel("Newcomers assigned")
         ax.set_ylabel("Mean WCSS per cluster")
         ax.set_title("Mean WCSS over newcomer assignment")
