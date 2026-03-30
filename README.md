@@ -251,32 +251,7 @@ Monkey-patches `eda.save` to display 14 plots inline rather than writing PNGs. S
 
 ---
 
-## Tests
-
-```bash
-pytest                                   # all tests (includes geocoding — slow)
-pytest tests/test_modeling.py            # model + evaluator only (fast, no geocoding)
-pytest tests/test_api.py                 # API integration tests
-```
-
-`tests/conftest.py` uses `scope="module"` fixtures and a `RateLimiter(min_delay_seconds=1)` to keep geocoding calls to a minimum.
-
-**Test classes:**
-
-| File | Class | Covers |
-|---|---|---|
-| `test_modeling.py` | `TestBaselineGroupModel` | fit, predict, assign_cluster |
-| `test_modeling.py` | `TestAggloGroupModel` | fit, predict, weights, connectivity, assign, split, labels |
-| `test_modeling.py` | `TestEvaluator` | WCSS, silhouette, report, group stats, drift, drift report, baseline comparison |
-| `test_api.py` | `TestBeforeInit` | 503 behaviour before initialization |
-| `test_api.py` | `TestReadOnly` | status, metrics, groups, patients after initialization |
-| `test_api.py` | `TestMutating` | newcomers, split, delete, remove patient |
-
----
-
-## Feature Pipeline Reference
-
-Full detail in [`feature_pipeline.md`](feature_pipeline.md). Summary:
+## Feature Pipeline
 
 ### Stage 1 — `PatientDataTransformer`
 
@@ -323,3 +298,27 @@ Full detail in [`feature_pipeline.md`](feature_pipeline.md). Summary:
 | `boolean` | (configurable) | passthrough | `boolean__` |
 
 10 statistics are frozen from the training set to prevent leakage: pressure/satisfaction/cgpa/workstudy/financial_stress/sleep medians, `max_hours_`, `stress_75_`, `city_coords_`, plus StandardScaler mean/std and OneHotEncoder category sets.
+
+---
+
+## Tests
+
+```bash
+pytest                                   # all tests (includes geocoding — slow)
+pytest tests/test_modeling.py            # model + evaluator only (fast, no geocoding)
+pytest tests/test_api.py                 # API integration tests
+```
+
+`tests/conftest.py` uses `scope="module"` fixtures and a `RateLimiter(min_delay_seconds=1)` to keep geocoding calls to a minimum.
+
+**Test classes:**
+
+| File | Class | Covers |
+|---|---|---|
+| `test_modeling.py` | `TestBaselineGroupModel` | fit, predict, assign_cluster |
+| `test_modeling.py` | `TestAggloGroupModel` | fit, predict, weights, connectivity, assign, split, labels |
+| `test_modeling.py` | `TestEvaluator` | WCSS, silhouette, report, group stats, drift, drift report, baseline comparison |
+| `test_api.py` | `TestBeforeInit` | 503 behaviour before initialization |
+| `test_api.py` | `TestReadOnly` | status, metrics, groups, patients after initialization |
+| `test_api.py` | `TestMutating` | newcomers, split, delete, remove patient |
+
