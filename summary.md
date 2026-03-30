@@ -18,7 +18,6 @@ Assign ~2,172 mental health patients into treatment cohorts of ~12 for Charlie H
 - **Depression prevalence:** 17.8% of patients carry the depression flag — a minority but the primary clinical signal.
 - **Depression affects gender equally.** Depression is similarly distributed among depressed and non-depressed patients, younger people (and by proxy students) have much higher rates of depression.
 - **Clinical signals:** When depression is present, pressure and financial stress are markedly higher and satisfaction is lower. These features separate the two populations much more cleanly than demographic features alone.
-- **High-risk flag** (`stress_index ≥ 75th pct AND (suicidal thoughts OR family history OR depression)`) identifies the most acute patients and is the strongest single clustering signal.
 - **Pressure and satisfaction are inversely related** — a natural axis for group separation.
 - **Students report longer work/study hours** than professionals on average. Financial stress peaks for professionals in the 23–30 age band.
 - **Education level:** High-school-only patients are over-represented in depression, likely a proxy for age and fewer coping resources rather than education itself.
