@@ -31,7 +31,7 @@ Assign ~2,172 mental health patients into treatment cohorts of ~12 for Charlie H
 
 Agglomerative clustering is a natural fit for this task. The goal is to find locally similar patients and merge them bottom-up, without requiring a pre-specified centroid count. This is preferable to k-means for small, heterogeneous cohorts where the number of natural groups is not known in advance.
 
-Ward linkage (minimises within-cluster variance) is used over average linkage. Average linkage produces better global pairwise similarity but creates singleton and very small clusters, which is a worse patient experience — being an outlier in a group matters clinically.
+Ward linkage (minimises within-cluster variance) is used over average linkage. Average linkage produces better global pairwise similarity but creates singleton and very small clusters, which is a worse patient experience — being an outlier in a group matters clinically and since there are singleton and small clusters its much easier to get better cohesion metrics.
 
 ### Experiments
 
@@ -39,7 +39,7 @@ Ward linkage (minimises within-cluster variance) is used over average linkage. A
 |---|---|---|---|---|
 | **Baseline (random)** | 181 | ~2,039 | -0.35  | No cohesion by design; confirms the need for structure |
 | **Agglomerative (ward)** | 264 | ~51 | 0.06 | 40× WCSS reduction; group count rises due to cap enforcement splits |
-| **Agglomerative Average linkage** | 308 | 0.07 | more negative | Better global WCSS but produces singletons |
+| **Agglomerative Average linkage** | 308 | ~40 | 0.07 | Better global WCSS but produces singletons |
 | **Clinical weights (ward)** | 274 | ~50 | 0.05 | Upweighting depression / suicidal thoughts / stress pulls clinically similar patients together but slightly hurts demographic uniformity |
 | **k-NN connectivity** | 265 | ~50 | 0.06 | Local neighbor constraint reduces bridging artifacts; modest gain |
 | **Demographic connectivity** (`is_professional × age_group × gender_enc`) | 278 |~55 | 0.01 | Hard structural constraint significantly boosts demographic cohesion; WCSS rises slightly as the trade-off |
