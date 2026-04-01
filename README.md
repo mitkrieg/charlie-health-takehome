@@ -136,16 +136,12 @@ Extends `GroupModel`. Key behaviours:
 
 **Clinical weights used in the API / final model:**
 
+
 | Feature | Weight |
 |---|---|
-| `numeric__high_risk` | 3.0 |
-| `numeric__depression` | 2.5 |
-| `numeric__suicidal_thoughts` | 2.0 |
-| `numeric__stress_index` | 2.0 |
-| `numeric__financial_stress` | 1.5 |
-| `numeric__wellbeing_score` | 1.5 |
-| `numeric__pressure` | 1.5 |
-| `numeric__family_history` | 1.5 |
+| depression, suicidal_thoughts | 5.0× |
+| stress_index, unhealthy_diet | 2.0× |
+| financial_stress, wellbeing_score, pressure, family_history, statisfaction | 1.5× |
 
 ### `modeling/vectorizer.py` — `Vectorizer` + `FeatureConfig`
 
