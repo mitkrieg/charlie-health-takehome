@@ -11,7 +11,6 @@ POST   /newcomers                  — add one or more patients from a CSV uploa
 from __future__ import annotations
 
 import io
-import math
 
 import numpy as np
 import pandas as pd
@@ -32,9 +31,6 @@ from api.utils import (
 )
 
 router = APIRouter(tags=["patients"])
-
-
-# ── List all patients ──────────────────────────────────────────────────────────
 
 
 @router.get("/patients", response_model=PatientListResponse)
@@ -101,9 +97,6 @@ def remove_patient(patient_id: int):
         removed_from_group=group_id,
         group_size_after=remaining,
     )
-
-
-# ── Add newcomers ──────────────────────────────────────────────────────────────
 
 
 @router.post("/newcomers", response_model=NewcomerResponse, status_code=201)

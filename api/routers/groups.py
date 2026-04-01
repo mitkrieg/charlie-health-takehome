@@ -10,9 +10,7 @@ GET    /groups/{id}/metrics              — per-group quality metrics
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
 
 from api.schemas import (
     DeleteGroupResponse,

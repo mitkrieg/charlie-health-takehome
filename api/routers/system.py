@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import io
-import math
 from datetime import datetime, timezone
 
 import numpy as np
@@ -63,8 +62,8 @@ CLINICAL_WEIGHTS: dict[str, float] = {
 
 def _build_attribute_connectivity(init_feats: pd.DataFrame) -> sp.csr_matrix:
     """
-    Sparse connectivity matrix: two patients are connected iff they share
-    is_professional x age_group x gender_enc.  Vectorised via merge (avoids O(n²) loop).
+    Sparse connectivity matrix: two patients are connected if they share
+    certain attributes.
     """
     connectivity_attrs = [
         "is_professional",

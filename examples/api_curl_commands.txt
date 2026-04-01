@@ -1,0 +1,78 @@
+# Patient Grouping API — curl commands
+# Start the server first:  uvicorn api.main:app --reload
+# Base URL: http://localhost:8000
+# Interactive docs: http://localhost:8000/docs
+
+BASE=http://localhost:8000
+
+# ============================================================================
+# SYSTEM
+# ============================================================================
+
+# 1. Initialize — fit the clustering model on a CSV upload
+#    The CSV must have the same columns as data/data.csv.
+#    Returns: n_patients, n_groups, silhouette, wcss_total, group_stats
+curl -X POST "$BASE/initialize" \
+  -F "file=@data/data.csv"
+
+# 2. System status — health check + top-level metrics
+curl "$BASE/status"
+
+# 3. System metrics — clustering quality (silhouette, WCSS, group stats)
+curl "$BASE/metrics"
+
+# ============================================================================
+# GROUPS
+# ============================================================================
+
+# 4. List all groups — summary of every group (clinical + demographic stats)
+curl "$BASE/groups"
+
+# 5. Group detail — full info for one group, including member list
+#    Replace 0 with any valid group_id from /groups
+curl "$BASE/groups/0"
+
+# 6. Group metrics — WCSS and mean distance to centroid for one group
+curl "$BASE/groups/0/metrics"
+
+# 7. Find similar groups — returns the N nearest groups by centroid distance
+#    Default n=5; set ?n= to change
+curl "$BASE/groups/0/similar"
+curl "$BASE/groups/0/similar?n=3"
+
+# 8. Split a group — bisects a group into two via sub-clustering
+#    Returns original and new group IDs + sizes
+curl -X POST "$BASE/groups/0/split"
+
+# 9. Delete a group — removes a group; members reassigned by default
+#    ?reassign=true  (default) → members go to nearest remaining group
+#    ?reassign=false → members are orphaned
+curl -X DELETE "$BASE/groups/0"
+curl -X DELETE "$BASE/groups/1?reassign=false"
+
+# ============================================================================
+# PATIENTS
+# ============================================================================
+
+# 10. List all patients — patient_id and group_id for every patient
+curl "$BASE/patients"
+
+# 11. Patient detail — full attributes for one patient
+#     Replace 0 with any valid patient_id from /patients
+curl "$BASE/patients/0"
+
+# 12. Patient group — lightweight lookup of which group a patient belongs to
+curl "$BASE/patients/0/group"
+
+# 13. Remove a patient — deletes from their group
+curl -X DELETE "$BASE/patients/0"
+
+# ============================================================================
+# NEWCOMERS
+# ============================================================================
+
+# 14. Add newcomers — upload a CSV of new patients; each is assigned to the
+#     nearest group with capacity. Returns per-patient assignment details
+#     (group_id, WCSS delta, centroid drift).
+curl -X POST "$BASE/newcomers" \
+  -F "file=@newcomers.csv"
